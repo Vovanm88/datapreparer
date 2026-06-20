@@ -172,6 +172,11 @@ async def _drain_one(
         result = task.result()
         if result is None:
             progress.counters.download_failed += 1
+            progress.failure_reasons["unknown"] += 1
+            continue
+        if not result.get("ok", True):
+            progress.counters.download_failed += 1
+            progress.failure_reasons[str(result.get("failure_reason") or "download_failed")] += 1
             continue
         row = result["row"]
         sample_id = result["sample_id"]
@@ -211,7 +216,12 @@ async def _process_row(
     base["is_synthetic"] = False
 
     if not result.ok:
-        return None
+        return {
+            "ok": False,
+            "sample_id": sample_id,
+            "failure_reason": result.failure_reason or "download_failed",
+            "download_attempts": result.attempts,
+        }
 
     metrics, is_bad = score_image_bytes(
         result.data,
@@ -235,4 +245,4 @@ async def _process_row(
         **base,
         **metrics.to_row(),
     }
-    return {"sample_id": sample_id, "row": out}
+    return {"ok": True, "sample_id": sample_id, "row": out}

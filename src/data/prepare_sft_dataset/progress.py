@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ class ProgressReporter:
         self.last_emit_at = 0.0
         self.last_bytes = 0
         self.counters = ProgressCounters()
+        self.failure_reasons: Counter[str] = Counter()
         self.current_shard: str | None = None
         self.current_shard_index: int | None = None
         self.current_row_offset: int | None = None
@@ -66,6 +68,7 @@ class ProgressReporter:
             "bad_count": getattr(state, "bad_count", 0),
             "synthetic_count": getattr(state, "synthetic_count", 0),
             "counters": asdict(self.counters),
+            "failure_reasons": dict(self.failure_reasons.most_common()),
         }
         self._write(payload)
         self._print(payload)
@@ -80,6 +83,8 @@ class ProgressReporter:
 
     def _print(self, payload: dict[str, Any]) -> None:
         counters = payload["counters"]
+        reasons = payload["failure_reasons"]
+        top_reasons = ", ".join(f"{key}:{value}" for key, value in list(reasons.items())[:4]) or "none"
         print(
             "[commoncatalog-progress] "
             f"shard={payload['current_shard_index']} row={payload['current_row_offset']} "
@@ -87,6 +92,6 @@ class ProgressReporter:
             f"speed={payload['mb_per_min_since_last']:.1f}MB/min "
             f"ok={counters['download_ok']} fail={counters['download_failed']} "
             f"good={payload['good_count']} bad={payload['bad_count']} "
-            f"bad_rejected={counters['bad_rejected']}",
+            f"bad_rejected={counters['bad_rejected']} fail_reasons={top_reasons}",
             flush=True,
         )
