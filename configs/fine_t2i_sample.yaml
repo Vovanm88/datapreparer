@@ -1,0 +1,29 @@
+dataset:
+  repo_id: ma-xu/fine-t2i
+  hf_token_env: HF_TOKEN
+  folders:
+    curated:
+      ratio: 0.50
+      published_samples: 168424
+      published_bytes: 278099869696
+    synthetic_original_prompt_square_resolution:
+      ratio: 0.30
+      published_samples: 1305350
+      published_bytes: 468151435264
+    synthetic_enhanced_prompt_square_resolution:
+      ratio: 0.20
+      published_samples: 1538253
+      published_bytes: 555124834304
+
+output:
+  root: ./out/fine_t2i_sample
+  target_bytes: 107374182400
+  tar_shard_bytes: 1073741824
+
+sampling:
+  rng_seed: 20260620
+  shuffle_buffer: 2048
+
+download:
+  timeout_seconds: 60
+  user_agent: ImGenMagaFineT2ISampler/0.1
