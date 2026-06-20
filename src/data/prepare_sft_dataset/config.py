@@ -35,13 +35,15 @@ class OutputConfig:
 
 @dataclass(slots=True)
 class DownloadConfig:
-    concurrency: int = 64
+    concurrency: int = 16
     queue_size: int = 512
     timeout_seconds: float = 30.0
     retries: int = 3
     max_file_bytes: int = 20 * MIB
     user_agent: str = "ImGenMagaCommonCatalogBuilder/0.1"
     progress_interval_seconds: float = 30.0
+    rate_limit_base_sleep_seconds: float = 30.0
+    rate_limit_max_sleep_seconds: float = 300.0
 
 
 @dataclass(slots=True)

@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import math
+import hashlib
 from typing import Any
 
 
 DROP_SOURCE_COLUMNS = {"caption"}
+
+
+def get_image_bytes(row: dict[str, Any]) -> bytes | None:
+    jpg = row.get("jpg")
+    if isinstance(jpg, dict):
+        value = jpg.get("bytes")
+        if isinstance(value, bytes | bytearray | memoryview):
+            return bytes(value)
+    return None
 
 
 def get_image_url(row: dict[str, Any]) -> str | None:
@@ -21,11 +31,16 @@ def get_image_url(row: dict[str, Any]) -> str | None:
     return None
 
 
-def stable_sample_id(row: dict[str, Any], url: str) -> str:
+def stable_sample_id(row: dict[str, Any], url: str | None = None) -> str:
     for key in ("sha256", "photoid", "key"):
         value = row.get(key)
         if value is not None and str(value):
             return f"{key}:{value}"
+    image_bytes = get_image_bytes(row)
+    if image_bytes is not None:
+        return f"jpg_bytes:{hashlib.sha256(image_bytes).hexdigest()}"
+    if url is None:
+        return "unknown"
     return f"url:{url}"
 
 
@@ -44,7 +59,7 @@ def is_candidate(row: dict[str, Any], *, min_side: int, max_side: int, min_ratio
     ratio = width / height
     if not (min_ratio <= ratio <= max_ratio):
         return False
-    return get_image_url(row) is not None
+    return get_image_bytes(row) is not None or get_image_url(row) is not None
 
 
 def strip_caption(row: dict[str, Any]) -> dict[str, Any]:

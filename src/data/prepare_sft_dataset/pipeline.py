@@ -11,7 +11,7 @@ from .auth import hf_storage_options, resolve_hf_token
 from .bad_pool import BadPoolManager
 from .config import BuilderConfig
 from .downloader import ImageDownloader, atomic_write, extension_from_url
-from .metadata import get_image_url, is_candidate, stable_sample_id, strip_caption
+from .metadata import get_image_bytes, get_image_url, is_candidate, stable_sample_id, strip_caption
 from .progress import ProgressReporter
 from .quality import score_image_bytes
 from .shards import SourceShard, discover_commoncatalog_shards
@@ -65,6 +65,8 @@ async def run_builder(cfg: BuilderConfig, *, dry_run: bool = False, limit_shards
         retries=cfg.download.retries,
         max_file_bytes=cfg.download.max_file_bytes,
         user_agent=cfg.download.user_agent,
+        rate_limit_base_sleep_seconds=cfg.download.rate_limit_base_sleep_seconds,
+        rate_limit_max_sleep_seconds=cfg.download.rate_limit_max_sleep_seconds,
     )
     try:
         for shard_index, shard in enumerate(shards[state.current_shard_index :], start=state.current_shard_index):
@@ -132,7 +134,6 @@ async def _process_shard(
             continue
         progress.counters.candidates += 1
         url = get_image_url(row)
-        assert url is not None
         sample_id = stable_sample_id(row, url)
         if store.seen(sample_id):
             progress.counters.seen_skipped += 1
@@ -181,6 +182,10 @@ async def _drain_one(
         row = result["row"]
         sample_id = result["sample_id"]
         progress.counters.download_ok += 1
+        if result.get("image_source") == "hf_parquet_jpg_bytes":
+            progress.counters.hf_image_bytes_ok += 1
+        elif result.get("image_source") == "fallback_url":
+            progress.counters.fallback_url_downloads += 1
         if not bad_pool.accept(row, good_count=state.good_count, bad_count=state.bad_count):
             store.mark_seen(sample_id)
             progress.counters.bad_rejected += 1
@@ -206,36 +211,52 @@ async def _process_row(
     row_index: int,
     downloader: ImageDownloader,
 ) -> dict[str, Any] | None:
-    result = await downloader.fetch(url)
+    image_bytes = get_image_bytes(row)
+    content_type = None
+    attempts = 0
+    source = "hf_parquet_jpg_bytes"
+    if image_bytes is None:
+        if url is None:
+            return {
+                "ok": False,
+                "sample_id": sample_id,
+                "failure_reason": "missing_image_bytes_and_url",
+                "download_attempts": 0,
+            }
+        result = await downloader.fetch(url)
+        attempts = result.attempts
+        content_type = result.content_type
+        source = "fallback_url"
+        if not result.ok:
+            return {
+                "ok": False,
+                "sample_id": sample_id,
+                "failure_reason": result.failure_reason or "download_failed",
+                "download_attempts": result.attempts,
+            }
+        image_bytes = result.data
     now = datetime.now(timezone.utc).isoformat()
     base = strip_caption(row)
     base["source_parquet_path"] = shard.repo_path
     base["source_row_index"] = row_index
     base["processed_at"] = now
-    base["download_attempts"] = result.attempts
+    base["download_attempts"] = attempts
+    base["image_source"] = source
     base["is_synthetic"] = False
 
-    if not result.ok:
-        return {
-            "ok": False,
-            "sample_id": sample_id,
-            "failure_reason": result.failure_reason or "download_failed",
-            "download_attempts": result.attempts,
-        }
-
     metrics, is_bad = score_image_bytes(
-        result.data,
+        image_bytes,
         cfg.quality,
         min_side=cfg.dataset.min_side,
         max_side=cfg.dataset.max_side,
         min_ratio=cfg.dataset.min_ratio,
         max_ratio=cfg.dataset.max_ratio,
     )
-    digest = hashlib.sha256(result.data).hexdigest()
-    ext = extension_from_url(url, result.content_type)
+    digest = hashlib.sha256(image_bytes).hexdigest()
+    ext = extension_from_row_or_url(row, url, content_type)
     label = "bad" if is_bad else "good"
     path = cfg.output.root / "images" / label / f"{digest[:2]}" / f"{digest}{ext}"
-    atomic_write(path, result.data)
+    atomic_write(path, image_bytes)
 
     out = {
         "rel_path": path.relative_to(cfg.output.root).as_posix(),
@@ -245,4 +266,15 @@ async def _process_row(
         **base,
         **metrics.to_row(),
     }
-    return {"ok": True, "sample_id": sample_id, "row": out}
+    return {"ok": True, "sample_id": sample_id, "row": out, "image_source": source}
+
+
+def extension_from_row_or_url(row: dict[str, Any], url: str | None, content_type: str | None) -> str:
+    jpg = row.get("jpg")
+    if isinstance(jpg, dict):
+        path = jpg.get("path")
+        if isinstance(path, str):
+            suffix = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
+            if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+                return ".jpg" if suffix == ".jpeg" else suffix
+    return extension_from_url(url or "", content_type)

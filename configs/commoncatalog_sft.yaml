@@ -17,13 +17,15 @@ output:
   metadata_bytes_per_part: 2147483648
 
 download:
-  concurrency: 64
+  concurrency: 16
   queue_size: 512
   timeout_seconds: 30
   retries: 3
   max_file_bytes: 20971520
   user_agent: ImGenMagaCommonCatalogBuilder/0.1
   progress_interval_seconds: 30
+  rate_limit_base_sleep_seconds: 30
+  rate_limit_max_sleep_seconds: 300
 
 quality:
   monotone_luma_std: 8.0

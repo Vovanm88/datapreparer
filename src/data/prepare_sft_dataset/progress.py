@@ -19,6 +19,8 @@ class ProgressCounters:
     bad_written: int = 0
     bad_rejected: int = 0
     metadata_flushes: int = 0
+    hf_image_bytes_ok: int = 0
+    fallback_url_downloads: int = 0
 
 
 class ProgressReporter:
