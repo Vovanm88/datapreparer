@@ -462,6 +462,11 @@ async def _process_row(
 
 
 def extension_from_row_or_url(row: dict[str, Any], url: str | None, content_type: str | None) -> str:
+    ext = row.get("ext")
+    if isinstance(ext, str):
+        suffix = "." + ext.lower().lstrip(".")
+        if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+            return ".jpg" if suffix == ".jpeg" else suffix
     jpg = row.get("jpg")
     if isinstance(jpg, dict):
         path = jpg.get("path")

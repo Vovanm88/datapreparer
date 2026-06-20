@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import polars as pl
+
 from data.prepare_sft_dataset.config import BuilderConfig, OutputConfig, QualityConfig
 from data.prepare_sft_dataset.metadata import get_image_bytes, is_candidate, stable_sample_id, strip_caption
 from data.prepare_sft_dataset.pipeline import _process_row
@@ -46,6 +48,17 @@ def test_candidate_accepts_hf_image_bytes_without_url() -> None:
     assert stable_sample_id(row).startswith("jpg_bytes:")
 
 
+def test_candidate_accepts_binary_jpg_column_without_url() -> None:
+    row = {
+        "width": 1600,
+        "height": 1590,
+        "blip2_caption": "a photo",
+        "jpg": b"abc",
+    }
+    assert is_candidate(row, min_side=1024, max_side=3072, min_ratio=0.9, max_ratio=1.1)
+    assert get_image_bytes(row) == b"abc"
+
+
 def test_candidate_filter_rejects_oversize() -> None:
     row = {"width": 4096, "height": 4096, "blip2_caption": "x", "url": "https://example.com/a.jpg"}
     assert not is_candidate(row, min_side=1024, max_side=3072, min_ratio=0.9, max_ratio=1.1)
@@ -78,7 +91,8 @@ def test_process_row_prefers_hf_image_bytes(tmp_path: Path) -> None:
         "width": 1024,
         "height": 1024,
         "blip2_caption": "blue",
-        "jpg": {"bytes": png_bytes((0, 0, 255)), "path": "blue.png"},
+        "jpg": png_bytes((0, 0, 255)),
+        "ext": "png",
         "sha256": "sample",
     }
     cfg = BuilderConfig(output=OutputConfig(root=tmp_path))
@@ -90,3 +104,14 @@ def test_process_row_prefers_hf_image_bytes(tmp_path: Path) -> None:
     assert result["ok"]
     assert result["image_source"] == "hf_parquet_jpg_bytes"
     assert (tmp_path / result["row"]["rel_path"]).exists()
+
+
+def test_local_probe_parquet_jpg_is_binary_if_present() -> None:
+    probe_root = Path("tmp/commoncatalog_probe")
+    parquet_files = list(probe_root.rglob("*.parquet")) if probe_root.exists() else []
+    if not parquet_files:
+        return
+    row = pl.read_parquet(parquet_files[0], n_rows=1).to_dicts()[0]
+    image_bytes = get_image_bytes(row)
+    assert image_bytes is not None
+    assert image_bytes[:2] == b"\xff\xd8"

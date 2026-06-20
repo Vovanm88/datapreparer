@@ -10,6 +10,8 @@ DROP_SOURCE_COLUMNS = {"caption"}
 
 def get_image_bytes(row: dict[str, Any]) -> bytes | None:
     jpg = row.get("jpg")
+    if isinstance(jpg, bytes | bytearray | memoryview):
+        return bytes(jpg)
     if isinstance(jpg, dict):
         value = jpg.get("bytes")
         if isinstance(value, bytes | bytearray | memoryview):
