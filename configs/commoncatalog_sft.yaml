@@ -9,6 +9,7 @@ dataset:
   max_side: 3072
   min_ratio: 0.9
   max_ratio: 1.1
+  shard_workers: 2
 
 output:
   root: ./out/commoncatalog_sft
@@ -26,6 +27,7 @@ download:
   progress_interval_seconds: 30
   rate_limit_base_sleep_seconds: 30
   rate_limit_max_sleep_seconds: 300
+  allow_url_fallback: false
 
 quality:
   monotone_luma_std: 8.0

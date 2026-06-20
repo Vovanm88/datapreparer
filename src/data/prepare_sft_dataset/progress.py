@@ -38,12 +38,22 @@ class ProgressReporter:
         self.current_shard_index: int | None = None
         self.current_row_offset: int | None = None
         self.in_flight = 0
+        self.active_shards: dict[int, dict[str, Any]] = {}
 
     def set_position(self, *, shard: str, shard_index: int, row_offset: int, in_flight: int) -> None:
         self.current_shard = shard
         self.current_shard_index = shard_index
         self.current_row_offset = row_offset
         self.in_flight = in_flight
+
+    def set_shard_position(self, *, shard: str, shard_index: int, row_offset: int) -> None:
+        self.active_shards[shard_index] = {"shard": shard, "row_offset": row_offset}
+        self.current_shard = shard
+        self.current_shard_index = shard_index
+        self.current_row_offset = row_offset
+
+    def finish_shard(self, shard_index: int) -> None:
+        self.active_shards.pop(shard_index, None)
 
     def maybe_emit(self, state: Any, *, force: bool = False) -> None:
         now = time.monotonic()
@@ -63,6 +73,7 @@ class ProgressReporter:
             "current_shard_index": self.current_shard_index,
             "current_row_offset": self.current_row_offset,
             "in_flight_downloads": self.in_flight,
+            "active_shards": self.active_shards,
             "saved_image_bytes": saved,
             "saved_gib": saved / 1024**3,
             "mb_per_min_since_last": mb_per_min_since_last,
@@ -90,7 +101,7 @@ class ProgressReporter:
         print(
             "[commoncatalog-progress] "
             f"shard={payload['current_shard_index']} row={payload['current_row_offset']} "
-            f"inflight={payload['in_flight_downloads']} saved={payload['saved_gib']:.2f}GiB "
+            f"active_shards={len(payload['active_shards'])} inflight={payload['in_flight_downloads']} saved={payload['saved_gib']:.2f}GiB "
             f"speed={payload['mb_per_min_since_last']:.1f}MB/min "
             f"ok={counters['download_ok']} fail={counters['download_failed']} "
             f"good={payload['good_count']} bad={payload['bad_count']} "

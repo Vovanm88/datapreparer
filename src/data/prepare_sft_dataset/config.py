@@ -23,6 +23,7 @@ class DatasetConfig:
     max_side: int = 3072
     min_ratio: float = 0.9
     max_ratio: float = 1.1
+    shard_workers: int = 2
 
 
 @dataclass(slots=True)
@@ -44,6 +45,7 @@ class DownloadConfig:
     progress_interval_seconds: float = 30.0
     rate_limit_base_sleep_seconds: float = 30.0
     rate_limit_max_sleep_seconds: float = 300.0
+    allow_url_fallback: bool = False
 
 
 @dataclass(slots=True)
