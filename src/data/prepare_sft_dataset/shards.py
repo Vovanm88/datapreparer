@@ -6,6 +6,7 @@ from pathlib import PurePosixPath
 
 from huggingface_hub import HfApi
 
+from .auth import resolve_hf_token
 from .config import DatasetConfig
 
 
@@ -36,7 +37,7 @@ def parquet_uri(prefix: str, repo_path: str) -> str:
 
 
 def discover_commoncatalog_shards(cfg: DatasetConfig, limit: int | None = None) -> list[SourceShard]:
-    api = HfApi()
+    api = HfApi(token=resolve_hf_token(cfg.hf_token_env))
     shards: list[SourceShard] = []
     for top_dir in cfg.top_dirs:
         for least_range in cfg.least_dim_ranges:

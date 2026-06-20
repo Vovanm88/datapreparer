@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import random
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import polars as pl
 
+from .auth import hf_storage_options, resolve_hf_token
 from .bad_pool import BadPoolManager
 from .config import BuilderConfig
 from .downloader import ImageDownloader, atomic_write, extension_from_url
@@ -103,7 +102,8 @@ async def _process_shard(
     downloader: ImageDownloader,
     bad_pool: BadPoolManager,
 ) -> None:
-    frame = pl.read_parquet(shard.uri)
+    token = resolve_hf_token(cfg.dataset.hf_token_env)
+    frame = pl.read_parquet(shard.uri, storage_options=hf_storage_options(token))
     rows = frame.iter_rows(named=True)
     pending: set[asyncio.Task[dict[str, Any] | None]] = set()
     for row_index, row in enumerate(rows):

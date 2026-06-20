@@ -16,6 +16,7 @@ class DatasetConfig:
     repo_id: str = "common-canvas/commoncatalog-cc-by"
     split: str = "train"
     source_uri_prefix: str = "hf://datasets/common-canvas/commoncatalog-cc-by"
+    hf_token_env: str = "HF_TOKEN"
     top_dirs: list[str] = field(default_factory=lambda: [str(i) for i in range(10)])
     least_dim_ranges: list[str] = field(default_factory=lambda: ["1024-2048", "2048-4096", "4096+"])
     min_side: int = 1024
