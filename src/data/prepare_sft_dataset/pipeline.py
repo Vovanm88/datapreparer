@@ -12,6 +12,7 @@ from .bad_pool import BadPoolManager
 from .config import BuilderConfig
 from .downloader import ImageDownloader, atomic_write, extension_from_url
 from .metadata import get_image_url, is_candidate, stable_sample_id, strip_caption
+from .progress import ProgressReporter
 from .quality import score_image_bytes
 from .shards import SourceShard, discover_commoncatalog_shards
 from .state import StateStore, remove_dangling_temps
@@ -34,6 +35,7 @@ async def run_builder(cfg: BuilderConfig, *, dry_run: bool = False, limit_shards
         start_part=state.output_part_index,
     )
     bad_pool = BadPoolManager(root, hard_cap_ratio=cfg.bad_pool.hard_cap_ratio)
+    progress = ProgressReporter(root, interval_seconds=cfg.download.progress_interval_seconds)
 
     if state.synthetic_count == 0 and not dry_run:
         for row in generate_synthetic_bad(root, noise_count=cfg.bad_pool.synthetic_noise_count, seed=cfg.bad_pool.rng_seed):
@@ -43,6 +45,7 @@ async def run_builder(cfg: BuilderConfig, *, dry_run: bool = False, limit_shards
             state.saved_image_bytes += int(row.get("file_size_bytes") or 0)
         state.output_part_index = writer.part_index
         store.save(state)
+    progress.maybe_emit(state, force=True)
 
     shards = discover_commoncatalog_shards(cfg.dataset, limit=limit_shards)
     if dry_run:
@@ -67,15 +70,18 @@ async def run_builder(cfg: BuilderConfig, *, dry_run: bool = False, limit_shards
         for shard_index, shard in enumerate(shards[state.current_shard_index :], start=state.current_shard_index):
             if state.saved_image_bytes >= cfg.output.target_image_bytes:
                 break
-            await _process_shard(cfg, shard, shard_index, state, store, writer, downloader, bad_pool)
+            await _process_shard(cfg, shard, shard_index, state, store, writer, downloader, bad_pool, progress)
             state.current_shard_index = shard_index + 1
             state.current_row_offset = 0
             state.output_part_index = writer.part_index
             store.save(state)
+            progress.set_position(shard=shard.repo_path, shard_index=shard_index, row_offset=0, in_flight=0)
+            progress.maybe_emit(state, force=True)
     finally:
         await downloader.close()
         flushed = writer.flush()
         if flushed is not None:
+            progress.counters.metadata_flushes += 1
             state.output_part_index = writer.part_index
             store.save(state)
 
@@ -89,6 +95,7 @@ async def run_builder(cfg: BuilderConfig, *, dry_run: bool = False, limit_shards
         "current_shard_index": state.current_shard_index,
     }
     write_summary(root, summary)
+    progress.maybe_emit(state, force=True)
     return summary
 
 
@@ -101,12 +108,16 @@ async def _process_shard(
     writer: MetadataWriter,
     downloader: ImageDownloader,
     bad_pool: BadPoolManager,
+    progress: ProgressReporter,
 ) -> None:
     token = resolve_hf_token(cfg.dataset.hf_token_env)
+    progress.set_position(shard=shard.repo_path, shard_index=shard_index, row_offset=state.current_row_offset, in_flight=0)
+    progress.maybe_emit(state, force=True)
     frame = pl.read_parquet(shard.uri, storage_options=hf_storage_options(token))
     rows = frame.iter_rows(named=True)
     pending: set[asyncio.Task[dict[str, Any] | None]] = set()
     for row_index, row in enumerate(rows):
+        progress.counters.rows_scanned += 1
         if shard_index == state.current_shard_index and row_index < state.current_row_offset:
             continue
         if state.saved_image_bytes >= cfg.output.target_image_bytes:
@@ -119,23 +130,31 @@ async def _process_shard(
             max_ratio=cfg.dataset.max_ratio,
         ):
             continue
+        progress.counters.candidates += 1
         url = get_image_url(row)
         assert url is not None
         sample_id = stable_sample_id(row, url)
         if store.seen(sample_id):
+            progress.counters.seen_skipped += 1
             continue
         pending.add(
             asyncio.create_task(_process_row(cfg, row, url, sample_id, shard, row_index, downloader))
         )
+        progress.set_position(shard=shard.repo_path, shard_index=shard_index, row_offset=row_index + 1, in_flight=len(pending))
+        progress.maybe_emit(state)
         if len(pending) >= cfg.download.concurrency:
-            await _drain_one(pending, state, store, writer, bad_pool)
+            await _drain_one(pending, state, store, writer, bad_pool, progress)
             state.current_row_offset = row_index + 1
             state.output_part_index = writer.part_index
             store.save(state)
+            progress.set_position(shard=shard.repo_path, shard_index=shard_index, row_offset=state.current_row_offset, in_flight=len(pending))
+            progress.maybe_emit(state)
     while pending:
-        await _drain_one(pending, state, store, writer, bad_pool)
+        await _drain_one(pending, state, store, writer, bad_pool, progress)
         state.output_part_index = writer.part_index
         store.save(state)
+        progress.set_position(shard=shard.repo_path, shard_index=shard_index, row_offset=state.current_row_offset, in_flight=len(pending))
+        progress.maybe_emit(state)
 
 
 async def _drain_one(
@@ -144,6 +163,7 @@ async def _drain_one(
     store: StateStore,
     writer: MetadataWriter,
     bad_pool: BadPoolManager,
+    progress: ProgressReporter,
 ) -> None:
     done, pending_rest = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
     pending.clear()
@@ -151,19 +171,25 @@ async def _drain_one(
     for task in done:
         result = task.result()
         if result is None:
+            progress.counters.download_failed += 1
             continue
         row = result["row"]
         sample_id = result["sample_id"]
+        progress.counters.download_ok += 1
         if not bad_pool.accept(row, good_count=state.good_count, bad_count=state.bad_count):
             store.mark_seen(sample_id)
+            progress.counters.bad_rejected += 1
             continue
-        writer.add(row)
+        flushed = writer.add(row)
+        progress.counters.metadata_flushes += len([path for path in flushed if path is not None])
         store.mark_seen(sample_id)
         state.saved_image_bytes += int(row.get("file_size_bytes") or 0)
         if row.get("is_bad"):
             state.bad_count += 1
+            progress.counters.bad_written += 1
         else:
             state.good_count += 1
+            progress.counters.good_written += 1
 
 
 async def _process_row(

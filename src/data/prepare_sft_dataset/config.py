@@ -41,6 +41,7 @@ class DownloadConfig:
     retries: int = 3
     max_file_bytes: int = 20 * MIB
     user_agent: str = "ImGenMagaCommonCatalogBuilder/0.1"
+    progress_interval_seconds: float = 30.0
 
 
 @dataclass(slots=True)

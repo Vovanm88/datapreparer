@@ -33,7 +33,7 @@ class StateStore:
             return RunState()
         with self.path.open("r", encoding="utf-8") as fh:
             raw = json.load(fh)
-        return RunState(**{**RunState().__dict__, **raw})
+        return RunState(**{**asdict(RunState()), **raw})
 
     def save(self, state: RunState) -> None:
         tmp = self.path.with_suffix(".json.tmp")

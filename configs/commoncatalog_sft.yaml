@@ -23,6 +23,7 @@ download:
   retries: 3
   max_file_bytes: 20971520
   user_agent: ImGenMagaCommonCatalogBuilder/0.1
+  progress_interval_seconds: 30
 
 quality:
   monotone_luma_std: 8.0
